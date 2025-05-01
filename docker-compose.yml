@@ -1,0 +1,28 @@
+services:
+  web:
+    build:
+      context: ./src/web
+      dockerfile: Dockerfile
+    depends_on:
+      - auth
+    env_file:
+      - ./src/web/.env
+    networks:
+      - app-network
+    ports:
+      - "5000:5000"
+
+  auth:
+    build:
+      context: ./src/auth
+      dockerfile: Dockerfile
+    env_file:
+      - ./src/auth/.env
+    networks:
+      - app-network
+    ports:
+      - "8000:8000"
+
+networks:
+  app-network:
+    driver: bridge

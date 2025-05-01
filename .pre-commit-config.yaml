@@ -1,0 +1,64 @@
+# ******************************************************************* #
+# * useful commands:
+#   * `pre-commit install`  # install the pre-commit hooks
+#   * `pre-commit autoupdate`
+#   * `pre-commit run --all-files`
+# ******************************************************************* #
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.7
+    hooks:
+      - id: ruff
+        types_or: [ python, pyi ]  # prevent running on Jupyter notebooks
+        args: [ --fix ]  # enable lint fixes
+      - id: ruff-format
+        types_or: [ python, pyi ]  # prevent running on Jupyter notebooks
+
+  - repo: https://github.com/pre-commit/mirrors-isort
+    rev: v5.10.1
+    hooks:
+      - id: isort
+        args: [--settings-path, pyproject.toml]
+
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        pass_filenames: false
+        args: [-r, ., -c, pyproject.toml]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.15.0
+    hooks:
+      - id: mypy
+        pass_filenames: false
+        args: [., --ignore-missing-imports, --config-file=pyproject.toml]
+
+  # keep pylint local b/c otherwise getting missing import errors
+  - repo: local
+    hooks:
+      - id: pylint
+        name: pylint
+        entry: pylint
+        language: system
+        types: [python]
+
+  # no supported repository for interrogate, so use local repo
+  - repo: local
+    hooks:
+      - id: interrogate
+        name: interrogate
+        entry: interrogate
+        language: system
+        pass_filenames: false  # needed if excluding files with pyproject.toml or setup.cfg
