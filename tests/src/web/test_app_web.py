@@ -93,7 +93,7 @@ def test_index_logged_in_redirects_to_dashboard(
         json={"user": {"email": "u@x", "name": "TestUser"}},
         status_code=200,
     )
-    client.set_cookie("session_id", "dummy")
+    client.set_cookie("access_token", "dummy")
 
     response = client.get("/")
     assert response.status_code == 302
@@ -104,11 +104,11 @@ def test_google_login_sets_cookie_and_redirects(client: FlaskClient) -> None:
     """
     The /google-login callback should set the JWT cookie and redirect to dashboard.
     """
-    response = client.get("/google-login?token=abc123")
+    response = client.get("/google-login?access_token=abc123&refresh_token=xyz456")
     assert response.status_code in (301, 302)
     assert "/dashboard" in response.headers["Location"]
     set_cookie = response.headers.get("Set-Cookie", "")
-    assert "session_id=abc123" in set_cookie
+    assert "access_token=abc123" in set_cookie
 
 
 def test_dashboard_redirects_when_not_authenticated(client: FlaskClient) -> None:
@@ -132,7 +132,7 @@ def test_dashboard_success_when_authenticated(
         json={"user": {"email": "u@x", "name": "Alice"}},
         status_code=200,
     )
-    client.set_cookie("session_id", "s1")
+    client.set_cookie("access_token", "s1")
     response = client.get("/dashboard")
     assert response.status_code == 200
     assert "Alice" in response.get_data(as_text=True)
@@ -159,7 +159,7 @@ def test_settings_success_when_authenticated(
         json={"user": {"email": "u@x", "name": "Bob"}},
         status_code=200,
     )
-    client.set_cookie("session_id", "s2")
+    client.set_cookie("access_token", "s2")
     response = client.get("/settings")
     assert response.status_code == 200
     body = response.get_data(as_text=True).lower()
@@ -174,12 +174,12 @@ def test_logout_clears_cookie_and_redirects(
     The /logout endpoint should clear the session cookie and redirect back to index.
     """
     mock_api.post(f"{os.environ['AUTH_SERVICE_URL']}/logout", status_code=200)
-    client.set_cookie("session_id", "s3")
+    client.set_cookie("access_token", "s3")
 
     response_get = client.get("/logout")
     assert response_get.status_code in (301, 302, 200)
-    assert "session_id=;" in response_get.headers.get("Set-Cookie", "")
+    assert "access_token=;" in response_get.headers.get("Set-Cookie", "")
 
     response_post = client.post("/logout")
     assert response_post.status_code in (301, 302, 200)
-    assert "session_id=;" in response_post.headers.get("Set-Cookie", "")
+    assert "access_token=;" in response_post.headers.get("Set-Cookie", "")

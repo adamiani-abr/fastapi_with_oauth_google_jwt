@@ -104,7 +104,7 @@ def test_verify_expired_token(monkeypatch: pytest.MonkeyPatch, client: TestClien
     monkeypatch.setattr(jwt_lib, "decode", lambda *args, **kwargs: (_ for _ in ()).throw(ExpiredSignatureError()))
     resp = client.post("/verify", headers={"Authorization": "Bearer expired"})
     assert resp.status_code == status.HTTP_401_UNAUTHORIZED
-    assert resp.json()["detail"] == "Token has expired"
+    assert resp.json()["detail"] == "Token expired"
 
 
 def test_verify_invalid_token(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> None:

@@ -16,12 +16,21 @@ services:
     build:
       context: ./src/auth
       dockerfile: Dockerfile
+    depends_on:
+      - redis
     env_file:
       - ./src/auth/.env
     networks:
       - app-network
     ports:
       - "8000:8000"
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
 
 networks:
   app-network:

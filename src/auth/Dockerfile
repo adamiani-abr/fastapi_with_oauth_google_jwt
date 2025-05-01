@@ -18,6 +18,7 @@ RUN uv pip install -r requirements.txt --system
 
 COPY app.py .
 COPY logging_config.py .
+COPY jwt_token_manager.py .
 
 EXPOSE 8000
 

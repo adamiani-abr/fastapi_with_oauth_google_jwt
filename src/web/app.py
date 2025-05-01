@@ -3,7 +3,7 @@ import os
 from functools import wraps
 from typing import Any, Callable, Dict, Optional
 
-import logging_config  # pylint: disable=import-error
+import logging_config
 import requests
 from dotenv import load_dotenv
 from flask import Flask, g, redirect, render_template, request, url_for
@@ -19,12 +19,85 @@ load_dotenv()
 # * Configuration variables
 AUTH_SERVICE_URL: str = os.environ["AUTH_SERVICE_URL"]
 COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+JWT_ACCESS_TOKEN_COOKIE_NAME: str = os.getenv("JWT_ACCESS_TOKEN_COOKIE_NAME", "access_token")
+JWT_REFRESH_TOKEN_COOKIE_NAME: str = os.getenv("JWT_REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
+
+# * make sure matches auth service config values for token TTLs (refer to README.md for possible issues if different)
+JWT_ACCESS_TOKEN_EXPIRE_SECONDS: int = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_SECONDS", "900"))  # 15 minutes
+JWT_REFRESH_TOKEN_EXPIRE_SECONDS: int = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_SECONDS", "86400"))  # 1 day
+
 app = Flask(__name__)
+
 app.config["SECRET_KEY"] = os.environ["SECRET_KEY"]
 
-# * JWT cookie settings
-JWT_COOKIE_NAME: str = os.getenv("JWT_COOKIE_NAME", "access_token")
-JWT_EXPIRE_SECONDS: int = int(os.getenv("JWT_EXPIRE_SECONDS", os.getenv("SESSION_EXPIRE_TIME_SECONDS", "3600")))
+
+# ****************************************************** #
+# * Helper functions for token and cookie handling *
+def _get_cookie(name: str) -> str | None:
+    """Retrieve a cookie value or None."""
+    return request.cookies.get(name)
+
+
+def _verify_access_token() -> dict[str, Any] | None:
+    """Validate the JWT access token via the auth service."""
+    token = _get_cookie(JWT_ACCESS_TOKEN_COOKIE_NAME)
+    if not token:
+        return None
+    return verify_token(token)
+
+
+def _refresh_tokens() -> tuple[str, str] | None:
+    """Attempt to rotate tokens using the refresh token endpoint."""
+    refresh = _get_cookie(JWT_REFRESH_TOKEN_COOKIE_NAME)
+    if not refresh:
+        return None
+    try:
+        resp = requests.post(
+            f"{AUTH_SERVICE_URL}/token/refresh",
+            json={"refresh_token": refresh},
+            timeout=3,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["access_token"], data["refresh_token"]
+    except Exception as e:
+        logger.warning(f"Refresh token failed: {e}")
+        return None
+
+
+def _set_auth_cookies(
+    response: WerkzeugResponse,
+    access_token: str,
+    refresh_token: str,
+) -> None:
+    """Set HTTP-only cookies for both access and refresh tokens."""
+    response.set_cookie(
+        JWT_ACCESS_TOKEN_COOKIE_NAME,
+        access_token,
+        httponly=True,
+        # secure=COOKIE_SECURE,
+        # domain=request.host,
+        path="/",
+        max_age=JWT_ACCESS_TOKEN_EXPIRE_SECONDS,
+    )
+    response.set_cookie(
+        JWT_REFRESH_TOKEN_COOKIE_NAME,
+        refresh_token,
+        httponly=True,
+        # secure=COOKIE_SECURE,
+        # domain=request.host,
+        path="/",
+        max_age=JWT_REFRESH_TOKEN_EXPIRE_SECONDS,
+    )
+
+
+def _clear_auth_cookies(response: WerkzeugResponse) -> None:
+    """Remove authentication cookies on logout."""
+    response.delete_cookie(JWT_ACCESS_TOKEN_COOKIE_NAME, path="/")
+    response.delete_cookie(JWT_REFRESH_TOKEN_COOKIE_NAME, path="/")
+
+
+# ****************************************************** #
 
 
 def verify_token(token: str, timeout: int = 3) -> Optional[Dict[str, Any]]:
@@ -53,19 +126,65 @@ def verify_token(token: str, timeout: int = 3) -> Optional[Dict[str, Any]]:
     return None
 
 
-def login_required(f: Callable) -> Callable:
-    """Decorator: ensure user has valid JWT and set g.current_user."""
+def login_required(f: Callable[..., Any]) -> Callable[..., Any]:
+    """
+    Decorator to enforce authentication on Flask view functions.
+
+    This decorator will:
+      1. Attempt to validate the JWT access token stored in a cookie.
+      2. If the access token is missing or invalid, attempt to refresh it
+         using the refresh token cookie by calling the auth service.
+      3. On successful refresh, set new access and refresh token cookies
+         and retry the original request.
+      4. If both tokens fail, redirect the user to the login page.
+
+    Args:
+        f: The Flask view function to wrap.
+
+    Returns:
+        The wrapped view function that enforces login.
+    """
 
     @wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> WerkzeugResponse:
-        token = request.cookies.get(JWT_COOKIE_NAME)
-        if not token:
-            return redirect(url_for("login"))
-        user = verify_token(token)
-        if not user:
-            return redirect(url_for("login"))
-        g.current_user = user
-        return f(*args, **kwargs)
+        """
+        Wrapper that handles token validation, refresh logic, and redirection.
+
+        Steps:
+          1. Try the access token:
+             - Read from JWT_ACCESS_TOKEN_COOKIE_NAME.
+             - If valid, attach user info to `g.current_user` and call the view.
+          2. Try the refresh token on failure:
+             - Read from JWT_REFRESH_TOKEN_COOKIE_NAME.
+             - POST to AUTH_SERVICE_URL/token/refresh.
+             - If successful, set new cookies and redirect back to the same path.
+          3. On any failure, redirect to the login page.
+
+        Returns:
+            A Flask Response object, either from the original view,
+            a token-refresh redirect, or a login redirect.
+        """
+        # * 1) Try the access token
+        user = _verify_access_token()
+        if user:
+            g.current_user = user
+            return f(*args, **kwargs)
+
+        # * 2) Try refresh token
+        refreshed = _refresh_tokens()
+        if refreshed:
+            access_token, refresh_token = refreshed
+            response = redirect(request.path)
+            _set_auth_cookies(response, access_token, refresh_token)
+
+            # * verify new access token before proceeding
+            user = verify_token(access_token)
+            if user:
+                g.current_user = user
+                return response
+
+        # * 3) Redirect to login on failure
+        return redirect(url_for("login"))
 
     return wrapper
 
@@ -75,7 +194,7 @@ def check_already_logged_in(f: Callable) -> Callable:
 
     @wraps(f)
     def wrapper(*args: Any, **kwargs: Any) -> WerkzeugResponse:
-        token = request.cookies.get(JWT_COOKIE_NAME)
+        token = request.cookies.get(JWT_ACCESS_TOKEN_COOKIE_NAME)
         if token and verify_token(token):
             logger.info("User already authenticated, redirecting to dashboard.")
             return redirect(url_for("dashboard"))
@@ -115,7 +234,7 @@ def login() -> Any:
 @check_already_logged_in
 def index() -> Any:
     """Homepage: show index.html, passing user if authenticated."""
-    token = request.cookies.get(JWT_COOKIE_NAME)
+    token = request.cookies.get(JWT_ACCESS_TOKEN_COOKIE_NAME)
     user = verify_token(token) if token else None
     if user:
         g.current_user = user
@@ -124,20 +243,14 @@ def index() -> Any:
 
 @app.route("/google-login")
 def google_login() -> WerkzeugResponse | tuple[str, int]:
-    """Callback after Google OAuth: set JWT cookie and redirect."""
-    token = request.args.get("token")
-    if not token:
-        return "Missing token", 400
+    access_token = request.args.get("access_token")
+    refresh_token = request.args.get("refresh_token")
+
+    if not access_token or not refresh_token:
+        return "Missing tokens", 400
+
     response = redirect(url_for("dashboard"))
-    response.set_cookie(
-        JWT_COOKIE_NAME,
-        token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        domain=request.host,
-        path="/",
-        max_age=JWT_EXPIRE_SECONDS,
-    )
+    _set_auth_cookies(response, access_token, refresh_token)
     return response
 
 
@@ -167,13 +280,13 @@ def settings() -> Any:
 
 @app.route("/logout", methods=["GET", "POST"])
 def logout() -> WerkzeugResponse:
-    """Clears JWT cookie and notifies auth service (optional)."""
-    token = request.cookies.get(JWT_COOKIE_NAME)
-    if token:
+    """Clears JWT cookies and notifies auth service (optional)."""
+    access_token = request.cookies.get(JWT_ACCESS_TOKEN_COOKIE_NAME)
+    if access_token:
         try:
             resp = requests.post(
                 f"{AUTH_SERVICE_URL}/logout",
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"Authorization": f"Bearer {access_token}"},
                 timeout=3,
             )
             resp.raise_for_status()  # automatically raises on 4xx/5xx
@@ -181,7 +294,7 @@ def logout() -> WerkzeugResponse:
         except Exception as e:
             logger.warning(f"Logout notification failed: {e}")
     response = redirect(url_for("index"))
-    response.delete_cookie(JWT_COOKIE_NAME, path="/")
+    _clear_auth_cookies(response)
     return response
 
 
