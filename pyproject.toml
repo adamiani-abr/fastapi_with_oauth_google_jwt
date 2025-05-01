@@ -25,7 +25,8 @@ dependencies = [
     'flask',
     'types-requests',
     'httpx',
-    'PyJWT'
+    'PyJWT',
+    'redis'
 ]
 
 [project.optional-dependencies]
