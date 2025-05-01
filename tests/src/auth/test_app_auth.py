@@ -1,5 +1,4 @@
 import importlib
-from typing import Any, Generator
 
 import jwt as jwt_lib
 import pytest
@@ -31,7 +30,7 @@ def setup_env(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client() -> Generator[TestClient, None, None]:
+def client() -> TestClient:
     """
     Import and configure the FastAPI app after env vars are set.
 
@@ -48,10 +47,13 @@ def test_auth_google_no_token(monkeypatch: pytest.MonkeyPatch, client: TestClien
     """
 
     class FakeTokenResp:
-        def raise_for_status(self) -> None:
-            pass
+        """Simulate a token response with no access_token."""
 
-        def json(self) -> Any:
+        def raise_for_status(self) -> None:
+            """Simulate a successful response."""
+
+        def json(self) -> dict:
+            """Simulate a response with no access_token."""
             return {}
 
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeTokenResp())
@@ -65,10 +67,13 @@ def test_auth_google_userinfo_errors(monkeypatch: pytest.MonkeyPatch, client: Te
     """
 
     class FakeTokenResp:
-        def raise_for_status(self) -> None:
-            pass
+        """Simulate a token response with no access_token."""
 
-        def json(self) -> Any:
+        def raise_for_status(self) -> None:
+            """Simulate a successful response."""
+
+        def json(self) -> dict:
+            """Simulate a response with an access_token."""
             return {"access_token": "tok"}
 
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeTokenResp())
