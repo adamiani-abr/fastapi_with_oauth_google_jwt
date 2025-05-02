@@ -81,7 +81,10 @@ def test_auth_google_userinfo_errors(monkeypatch: pytest.MonkeyPatch, client: Te
         (Timeout(), status.HTTP_504_GATEWAY_TIMEOUT),
         (RequestException("err"), status.HTTP_502_BAD_GATEWAY),
     ]:
-        monkeypatch.setattr("requests.get", lambda *args, **kwargs: (_ for _ in ()).throw(exc))
+        monkeypatch.setattr(
+            "requests.get",
+            lambda *args, **kwargs: (_ for _ in ()).throw(exc),  # pylint: disable=cell-var-from-loop
+        )
         resp = client.get("/auth/google?code=abc")
         assert resp.status_code == code
 

@@ -100,7 +100,7 @@ class JWTTokenManager:
         if not user_id:
             raise ValueError("Invalid or expired refresh token")
         self.__redis_storage.delete(key)  # enforce single-use
-        return user_id
+        return str(user_id)
 
     def delete_refresh_token_from_redis(self, token: str) -> None:
         """Delete the refresh token from Redis storage."""
